@@ -334,7 +334,8 @@ create_vcf_context() {
     
     # For cluster contexts with kubeconfig, we ONLY use kubeconfig/kubecontext flags
     # No endpoint, tenant, or CA cert flags when using kubeconfig
-    vcf context create "$context_name" \
+    # Pipe the API token twice to handle multiple prompts
+    printf "%s\n%s\n" "$api_token" "$api_token" | vcf context create "$context_name" \
         --type cloud-consumption-interface \
         --api-token "$api_token" \
         --kubeconfig "$kubeconfig_path" \
