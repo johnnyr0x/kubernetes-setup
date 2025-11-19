@@ -326,7 +326,6 @@ create_vcf_context() {
     local context_name="$1"
     local kubeconfig_path="${2:-$HOME/.kube/config}"
     local kubecontext="$3"
-    local api_token="$4"
     
     print_info "Creating VCF context: $context_name"
     print_info "Using kubeconfig: $kubeconfig_path"
@@ -335,9 +334,9 @@ create_vcf_context() {
     # For cluster contexts with kubeconfig, we ONLY use kubeconfig/kubecontext flags
     # No endpoint, tenant, or CA cert flags when using kubeconfig
     # Pipe the API token twice to handle multiple prompts
-    printf "%s\n%s\n" "$api_token" "$api_token" | vcf context create "$context_name" \
+    printf "%s\n%s\n" "$INITIAL_API_TOKEN" "$INITIAL_API_TOKEN" | vcf context create "$context_name" \
         --type cloud-consumption-interface \
-        --api-token "$api_token" \
+        --api-token "$INITIAL_API_TOKEN" \
         --kubeconfig "$kubeconfig_path" \
         --kubecontext "$kubecontext"
     
@@ -353,16 +352,17 @@ refresh_context() {
     while [ $retry_count -lt $max_retries ]; do
         print_info "Refreshing context: $context_name"
         
-        if echo "$context_name" | vcf context refresh 2>&1; then
+        # Try refreshing, piping the global API token if context use needs it
+        if printf "%s\n%s\n" "$context_name" "$INITIAL_API_TOKEN" | vcf context refresh 2>&1; then
             print_success "Context refreshed"
             return 0
         else
             retry_count=$((retry_count + 1))
             if [ $retry_count -lt $max_retries ]; then
                 print_warning "Context refresh failed. Your session may have expired."
-                local api_token=$(prompt_api_token)
+                # Update the global API token
+                INITIAL_API_TOKEN=$(prompt_api_token)
                 print_info "Re-authenticating..."
-                # Try to recreate or refresh with new token
                 continue
             else
                 print_error "Failed to refresh context after $max_retries attempts"
@@ -375,7 +375,6 @@ refresh_context() {
 # Function to use/activate context with retry on auth failure
 use_context() {
     local context_name="$1"
-    local api_token="$2"
     local max_retries=2
     local retry_count=0
     
@@ -383,17 +382,16 @@ use_context() {
         print_info "Activating context: $context_name"
         
         # Provide token multiple times for plugin sync and other prompts
-        if printf "%s\n%s\n%s\n%s\n" "$context_name" "$api_token" "$api_token" "$api_token" | vcf context use 2>&1; then
+        if printf "%s\n%s\n%s\n%s\n" "$context_name" "$INITIAL_API_TOKEN" "$INITIAL_API_TOKEN" "$INITIAL_API_TOKEN" | vcf context use 2>&1; then
             print_success "Context activated: $context_name"
             return 0
         else
             retry_count=$((retry_count + 1))
             if [ $retry_count -lt $max_retries ]; then
                 print_warning "Context activation failed. Your session may have expired."
-                local new_api_token=$(prompt_api_token)
-                api_token="$new_api_token"
+                # Update the global API token
+                INITIAL_API_TOKEN=$(prompt_api_token)
                 print_info "Re-authenticating..."
-                # Try to use context again
                 continue
             else
                 print_error "Failed to activate context after $max_retries attempts"
@@ -476,6 +474,14 @@ main() {
         fi
         echo ""
     else
+        # Get current context to display
+        local current_vcf_context=$(vcf context current 2>/dev/null || echo "")
+        if [ -n "$current_vcf_context" ]; then
+            print_info "Currently active VCF context: $current_vcf_context"
+        else
+            print_warning "No VCF context is currently active."
+        fi
+        
         # Ask if user wants to switch context
         read -p "Do you need to switch VCF context first? (y/N): " switch_context
         if [[ "$switch_context" =~ ^[Yy]$ ]]; then
@@ -552,9 +558,8 @@ main() {
     echo ""
     
     # Step 10: Get API token (reuse from initial setup if available)
-    local api_token="${INITIAL_API_TOKEN}"
-    if [ -z "$api_token" ]; then
-        api_token=$(prompt_api_token)
+    if [ -z "$INITIAL_API_TOKEN" ]; then
+        INITIAL_API_TOKEN=$(prompt_api_token)
         echo ""
     else
         print_info "Reusing API token from initial setup"
@@ -562,7 +567,7 @@ main() {
     fi
     
     # Step 11: Create VCF context
-    create_vcf_context "$vcf_context_name" "$kubeconfig_path" "$kubecontext_name" "$api_token"
+    create_vcf_context "$vcf_context_name" "$kubeconfig_path" "$kubecontext_name"
     echo ""
     
     # Step 12: Refresh context
@@ -570,17 +575,17 @@ main() {
     echo ""
     
     # Step 13: Use/activate context
-    use_context "$vcf_context_name" "$api_token"
+    use_context "$vcf_context_name" "$INITIAL_API_TOKEN"
     echo ""
     
     # Step 14: Verify connection
     print_info "Verifying connection to cluster..."
     
     # Export API token as env var in case vcf credential plugin can use it
-    export VCF_API_TOKEN="$api_token"
+    export VCF_API_TOKEN="$INITIAL_API_TOKEN"
     
     # Try kubectl with token piped for initial auth
-    if ! printf "%s\n" "$api_token" | timeout 15 kubectl get ns 2>/dev/null; then
+    if ! printf "%s\n" "$INITIAL_API_TOKEN" | timeout 15 kubectl get ns 2>/dev/null; then
         print_warning "Initial connection attempt failed, trying interactive authentication..."
         print_info "Please enter your API token if prompted:"
         kubectl get ns
@@ -600,6 +605,8 @@ main() {
     
     print_success "All done! You are now connected to cluster: $cluster_name"
     print_info "You can now use 'kubectl' or 'k' commands to interact with the cluster"
+    print_info "To set 'k' as an alias for 'kubectl' in your current session, run:"
+    print_info "  alias k=kubectl"
 }
 
 # Run main function
