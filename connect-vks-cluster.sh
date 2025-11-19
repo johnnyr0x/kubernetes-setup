@@ -539,6 +539,28 @@ setup_shell_helpers() {
     fi
     echo ""
     
+    # --- VCF CLI Autocomplete Setup ---
+    print_info "--- 3. VCF CLI Autocomplete ---"
+    
+    if ! command -v vcf >/dev/null; then
+        print_error "vcf command not found. Cannot set up autocomplete."
+    else
+        # Enable for current session
+        source <(vcf completion "$shell_name")
+        print_success "VCF Autocomplete enabled for current session."
+        
+        # Check if setup is permanent
+        if [ -f "$shell_config_file" ] && grep -q "vcf completion $shell_name" "$shell_config_file"; then
+            print_success "VCF Autocomplete is configured for new shells in $shell_config_file."
+        else
+            print_warning "VCF Autocomplete is NOT configured for new shells."
+            echo "To make it permanent, add the following line to your $shell_config_file:"
+            echo -e "${YELLOW}  source <(vcf completion $shell_name)${NC}"
+            needs_sourcing=true
+        fi
+    fi
+    echo ""
+    
     if [ "$needs_sourcing" = true ]; then
         print_info "After editing $shell_config_file, restart your shell or run:"
         echo -e "${YELLOW}  source $shell_config_file${NC}"

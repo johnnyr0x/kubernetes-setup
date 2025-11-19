@@ -31,6 +31,7 @@ These variables can be set to override default values or avoid prompts:
 - **Single API token entry** - Token is reused throughout the session (no repeated prompts)
 - **Smart context naming** - Auto-uses cluster name as context name
 - **Namespace labeling** - Automatically applies privileged pod security labels
+- **VCF CLI Autocomplete** - Automatically enables shell completion for VCF commands
 - **Error recovery** - Handles expired sessions and authentication failures
 - **Cluster status checking** - Waits for clusters to be ready before connecting
 
