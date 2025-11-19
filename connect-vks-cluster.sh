@@ -15,9 +15,13 @@
 set -e  # Exit on error
 
 # VCF Automation endpoint and defaults
-VCFA_ENDPOINT="vcf-automation.corp.vmbeans.com"
+# Read from environment variables, fallback to defaults if not set
+VCFA_ENDPOINT="${VCF_ENDPOINT:-vcf-automation.corp.vmbeans.com}"
 CERT_FILE="vcfa-cert-chain.pem"
-DEFAULT_TENANT="broadcom"
+DEFAULT_TENANT="${VCF_TENANT:-broadcom}"
+
+# Global API Token variable
+VCF_API_TOKEN=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -96,8 +100,8 @@ create_initial_vcf_context() {
     local context_name=$(prompt_input "Enter initial context name" "vcfa")
     echo ""
     
-    # Prompt for API token (store in variable for reuse)
-    INITIAL_API_TOKEN=$(prompt_api_token)
+    # Prompt for API token (store in global variable)
+    prompt_api_token # This will populate VCF_API_TOKEN if it's empty
     echo ""
     
     print_info "Creating initial VCF context '$context_name'..."
@@ -112,9 +116,9 @@ create_initial_vcf_context() {
     echo ""
     
     # Create initial context WITHOUT --type flag (vcf auto-detects for initial context)
-    vcf context create "$context_name" \
+    printf "%s\n" "$VCF_API_TOKEN" | vcf context create "$context_name" \
         --endpoint "$VCFA_ENDPOINT" \
-        --api-token "$INITIAL_API_TOKEN" \
+        --api-token "$VCF_API_TOKEN" \
         --tenant-name "$DEFAULT_TENANT" \
         --ca-certificate "$CERT_FILE"
     
@@ -124,12 +128,12 @@ create_initial_vcf_context() {
     echo ""
     
     if [ $exit_code -eq 0 ]; then
-        print_success "Initial VCF context 'vcfa' created successfully!"
+        print_success "Initial VCF context '$context_name' created successfully!"
         echo ""
         
         # Check if namespace contexts were created (e.g., vcfa:dev-wrcc9:default-project)
         print_info "Checking for namespace contexts..."
-        local namespace_contexts=$(vcf context list 2>/dev/null | grep "vcfa:" | awk '{print $1}')
+        local namespace_contexts=$(vcf context list 2>/dev/null | grep "$context_name:" | awk '{print $1}')
         
         if [ -n "$namespace_contexts" ]; then
             print_success "Found namespace contexts:"
@@ -144,8 +148,8 @@ create_initial_vcf_context() {
             echo ""
             
             # Activate the namespace context (this will install plugins)
-            # Provide the API token in case it's needed
-            printf "%s\n%s\n" "$first_namespace_ctx" "$INITIAL_API_TOKEN" | vcf context use 2>&1 || true
+            # Provide the API token in case it's needed, piped multiple times
+            printf "%s\n%s\n%s\n%s\n" "$first_namespace_ctx" "$VCF_API_TOKEN" "$VCF_API_TOKEN" "$VCF_API_TOKEN" | vcf context use 2>&1 || true
             echo ""
             
             print_success "Initial VCF setup complete!"
@@ -164,7 +168,7 @@ create_initial_vcf_context() {
         echo "  3. Endpoint is reachable: $VCFA_ENDPOINT"
         echo ""
         print_info "Try running this command manually:"
-        echo "  vcf context create vcfa --endpoint $VCFA_ENDPOINT --api-token $api_token --tenant-name $tenant_name --ca-certificate $CERT_FILE"
+        echo "  vcf context create vcfa --endpoint $VCFA_ENDPOINT --api-token $VCF_API_TOKEN --tenant-name $DEFAULT_TENANT --ca-certificate $CERT_FILE"
         return 1
     fi
 }
@@ -183,6 +187,8 @@ select_vcf_context() {
         fi
         create_initial_vcf_context
     else
+        # Run the interactive context selector. The VCF_API_TOKEN env var should be used for auth.
+        print_info "Please select your context from the interactive list below:"
         vcf context use
     fi
 }
@@ -200,11 +206,12 @@ list_clusters() {
         
         if [ -n "$current_context" ]; then
             print_info "Current context: $current_context"
-            local api_token=$(prompt_api_token)
+            # Call prompt_api_token to ensure VCF_API_TOKEN is populated
+            prompt_api_token
             
             # Try to refresh the current context with new credentials
             print_info "Refreshing authentication..."
-            echo "$current_context" | vcf context refresh 2>&1 || true
+            printf "%s\n%s\n" "$current_context" "$VCF_API_TOKEN" | vcf context refresh 2>&1 || true
             
             # Try listing again
             print_info "Retrying cluster list..."
@@ -288,11 +295,13 @@ get_kubecontext_name() {
 
 # Function to prompt for API token
 prompt_api_token() {
-    local api_token
-    # Print to stderr so it doesn't get captured in command substitution
-    print_info "API token required for context creation" >&2
-    read -p "Enter API Token: " api_token
-    echo "$api_token"
+    # Only prompt if the global VCF_API_TOKEN is empty
+    if [ -z "$VCF_API_TOKEN" ]; then
+        print_info "API token required for authentication" >&2
+        read -p "Enter API Token: " VCF_API_TOKEN # Removed -s for visible input
+        echo >&2 # Add a newline after input
+    fi
+    echo "$VCF_API_TOKEN" # Return the token
 }
 
 # Function to get current context endpoint and tenant info
@@ -334,9 +343,9 @@ create_vcf_context() {
     # For cluster contexts with kubeconfig, we ONLY use kubeconfig/kubecontext flags
     # No endpoint, tenant, or CA cert flags when using kubeconfig
     # Pipe the API token twice to handle multiple prompts
-    printf "%s\n%s\n" "$INITIAL_API_TOKEN" "$INITIAL_API_TOKEN" | vcf context create "$context_name" \
+    printf "%s\n%s\n" "$VCF_API_TOKEN" "$VCF_API_TOKEN" | vcf context create "$context_name" \
         --type cloud-consumption-interface \
-        --api-token "$INITIAL_API_TOKEN" \
+        --api-token "$VCF_API_TOKEN" \
         --kubeconfig "$kubeconfig_path" \
         --kubecontext "$kubecontext"
     
@@ -352,8 +361,9 @@ refresh_context() {
     while [ $retry_count -lt $max_retries ]; do
         print_info "Refreshing context: $context_name"
         
-        # Try refreshing, piping the global API token if context use needs it
-        if printf "%s\n%s\n" "$context_name" "$INITIAL_API_TOKEN" | vcf context refresh 2>&1; then
+        # The vcf command takes context name as an argument
+        # We pipe the token to handle potential re-authentication prompts
+        if printf "%s\n" "$VCF_API_TOKEN" | vcf context refresh "$context_name" 2>&1; then
             print_success "Context refreshed"
             return 0
         else
@@ -361,7 +371,7 @@ refresh_context() {
             if [ $retry_count -lt $max_retries ]; then
                 print_warning "Context refresh failed. Your session may have expired."
                 # Update the global API token
-                INITIAL_API_TOKEN=$(prompt_api_token)
+                VCF_API_TOKEN=$(prompt_api_token)
                 print_info "Re-authenticating..."
                 continue
             else
@@ -382,7 +392,7 @@ use_context() {
         print_info "Activating context: $context_name"
         
         # Provide token multiple times for plugin sync and other prompts
-        if printf "%s\n%s\n%s\n%s\n" "$context_name" "$INITIAL_API_TOKEN" "$INITIAL_API_TOKEN" "$INITIAL_API_TOKEN" | vcf context use 2>&1; then
+        if printf "%s\n%s\n%s\n%s\n" "$context_name" "$VCF_API_TOKEN" "$VCF_API_TOKEN" "$VCF_API_TOKEN" | vcf context use 2>&1; then
             print_success "Context activated: $context_name"
             return 0
         else
@@ -390,7 +400,7 @@ use_context() {
             if [ $retry_count -lt $max_retries ]; then
                 print_warning "Context activation failed. Your session may have expired."
                 # Update the global API token
-                INITIAL_API_TOKEN=$(prompt_api_token)
+                VCF_API_TOKEN=$(prompt_api_token)
                 print_info "Re-authenticating..."
                 continue
             else
@@ -427,7 +437,7 @@ configure_settings() {
         echo ""
         
         # Endpoint
-        local new_endpoint=$(prompt_input "VCF Endpoint" "$VCFA_ENDPOINT")
+        local new_endpoint=$(prompt_input "VCF Endpoint (or set VCF_ENDPOINT env var)" "$VCFA_ENDPOINT")
         VCFA_ENDPOINT="$new_endpoint"
         
         # Certificate file
@@ -435,7 +445,7 @@ configure_settings() {
         CERT_FILE="$new_cert"
         
         # Tenant name
-        local new_tenant=$(prompt_input "Default Tenant/Organization" "$DEFAULT_TENANT")
+        local new_tenant=$(prompt_input "Default Tenant/Organization (or set VCF_TENANT env var)" "$DEFAULT_TENANT")
         DEFAULT_TENANT="$new_tenant"
         
         echo ""
@@ -457,6 +467,14 @@ main() {
     
     # Step 0: Display and optionally customize configuration
     configure_settings
+
+    # Ensure VCF_API_TOKEN is populated and exported at the beginning of main function
+    if [ -z "$VCF_API_TOKEN" ]; then
+        print_info "API token not set. Prompting for token."
+        VCF_API_TOKEN=$(prompt_api_token)
+        export VCF_API_TOKEN # Export the token for child processes (like vcf)
+        echo ""
+    fi
     
     # Step 1: Check if VCF contexts exist, create if needed
     if ! check_vcf_contexts_exist; then
@@ -475,15 +493,15 @@ main() {
         echo ""
     else
         # Get current context to display
-        local current_vcf_context=$(vcf context current 2>/dev/null || echo "")
+        local current_vcf_context=$(vcf context list 2>/dev/null | grep '\*' | awk '{print $2}' || echo "")
         if [ -n "$current_vcf_context" ]; then
             print_info "Currently active VCF context: $current_vcf_context"
+            read -p "Do you need to switch VCF context first? (y/N): " switch_context
         else
-            print_warning "No VCF context is currently active."
+            print_warning "No VCF context is currently active. Automatically proceeding to select context."
+            switch_context="y" # Assume 'yes' if no context is active
         fi
         
-        # Ask if user wants to switch context
-        read -p "Do you need to switch VCF context first? (y/N): " switch_context
         if [[ "$switch_context" =~ ^[Yy]$ ]]; then
             select_vcf_context
             echo ""
@@ -557,44 +575,38 @@ main() {
     print_info "Using kubecontext: $kubecontext_name"
     echo ""
     
-    # Step 10: Get API token (reuse from initial setup if available)
-    if [ -z "$INITIAL_API_TOKEN" ]; then
-        INITIAL_API_TOKEN=$(prompt_api_token)
-        echo ""
-    else
-        print_info "Reusing API token from initial setup"
-        echo ""
-    fi
-    
-    # Step 11: Create VCF context
+    # Step 10: Create VCF context
     create_vcf_context "$vcf_context_name" "$kubeconfig_path" "$kubecontext_name"
     echo ""
     
-    # Step 12: Refresh context
+    # Step 11: Refresh context
     refresh_context "$vcf_context_name"
     echo ""
     
-    # Step 13: Use/activate context
-    use_context "$vcf_context_name" "$INITIAL_API_TOKEN"
+    # Step 12: Use/activate context
+    use_context "$vcf_context_name"
     echo ""
     
-    # Step 14: Verify connection
+    # Step 13: Verify connection
     print_info "Verifying connection to cluster..."
     
     # Export API token as env var in case vcf credential plugin can use it
-    export VCF_API_TOKEN="$INITIAL_API_TOKEN"
+    export VCF_API_TOKEN="$VCF_API_TOKEN"
     
     # Try kubectl with token piped for initial auth
-    if ! printf "%s\n" "$INITIAL_API_TOKEN" | timeout 15 kubectl get ns 2>/dev/null; then
-        print_warning "Initial connection attempt failed, trying interactive authentication..."
-        print_info "Please enter your API token if prompted:"
-        kubectl get ns
+    if ! printf "%s\n" "$VCF_API_TOKEN" | timeout 20 kubectl get ns 2>/dev/null; then
+        print_warning "Initial connection attempt failed. Retrying with piped token..."
+        # Fallback to interactive, but still provide the token via pipe
+        if ! printf "%s\n" "$VCF_API_TOKEN" | kubectl get ns; then
+            print_error "Failed to connect to cluster even with token. Please check cluster status and networking."
+            exit 1
+        fi
     fi
     
     print_success "Successfully connected to cluster!"
     echo ""
     
-    # Step 15: Label all namespaces with privileged pod security
+    # Step 14: Label all namespaces with privileged pod security
     print_info "Labeling all namespaces with privileged pod security enforcement..."
     if kubectl label --overwrite namespace --all pod-security.kubernetes.io/enforce=privileged 2>&1; then
         print_success "All namespaces labeled with privileged pod security"

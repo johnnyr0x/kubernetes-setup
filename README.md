@@ -16,7 +16,14 @@ A comprehensive shell script that automates VKS (VMware Kubernetes Service) clus
 - Access to VCF Automation endpoint
 - Valid API token for authentication
 
-####Features
+#### Environment Variables (Optional)
+
+These variables can be set to override default values or avoid prompts:
+
+- `VCF_ENDPOINT`: Specifies the VCF Automation endpoint (e.g., `vcf-automation.corp.vmbeans.com`)
+- `VCF_TENANT`: Specifies the default tenant/organization name (e.g., `broadcom`)
+
+#### Features
 
 - **Automatic initial setup** - Creates VCF context and installs plugins on first run
 - **Configurable settings** - Customize endpoint, certificate, and tenant at runtime
@@ -93,11 +100,26 @@ $ ./connect-vks-cluster.sh vks-01
 [INFO] VKS Cluster Connection Script
 ======================================
 
-Do you need to switch VCF context first? (y/N): y
-[INFO] Selecting VCF context...
+[INFO] Current Configuration:
+======================================
+  VCF Endpoint: vcf-automation.corp.vmbeans.com
+  CA Certificate: vcfa-cert-chain.pem
+  Default Tenant: broadcom
+======================================
+
+Would you like to customize these settings? (y/N): n
+[INFO] Currently active VCF context: vcfa:dev-wrcc9:default-project
+Do you need to switch VCF context first? (y/N): n
+[INFO] Certificate file already exists: vcfa-cert-chain.pem
+
 [INFO] Listing available clusters...
+  NAME                     NAMESPACE  STATUS    CONTROLPLANE  WORKERS  KUBERNETES             KUBERNETESRELEASE        
+  vks-01                   dev-wrcc9  running   1/1           2/2      v1.33.3+vmware.1-fips  v1.33.3---vmware.1-fips-vkr.1
+  # ... other clusters ...
+
+[INFO] Cluster name provided: vks-01
 [INFO] Using cluster: vks-01
-[INFO] Using VCF context name: vks-01
+[INFO] Auto-using cluster name as VCF context name: vks-01
 [SUCCESS] Cluster is running and ready
 [INFO] Registering JWT authenticator for cluster: vks-01
 [SUCCESS] JWT authenticator registered
@@ -115,8 +137,12 @@ Enter API Token: ****************************************
 [SUCCESS] Context activated: vks-01
 [INFO] Verifying connection to cluster...
 [SUCCESS] Successfully connected to cluster!
+[INFO] Labeling all namespaces with privileged pod security enforcement...
+[SUCCESS] All namespaces labeled with privileged pod security
 [SUCCESS] All done! You are now connected to cluster: vks-01
 [INFO] You can now use 'kubectl' or 'k' commands to interact with the cluster
+[INFO] To set 'k' as an alias for 'kubectl' in your current session, run:
+[INFO]   alias k=kubectl
 ```
 
 #### Manual Steps (for reference)
@@ -164,6 +190,15 @@ kubectl get ns
 
 A comprehensive debugging script for troubleshooting VKS cluster issues at the VM level. Use this when clusters are stuck in provisioning or nodes won't become Ready.
 
+#### Prerequisites
+
+- `kubectl` installed
+- `ssh` client
+
+#### Environment Variables (Optional)
+
+- `K8S_NAMESPACE`: Specifies the Kubernetes namespace to search for VMs (e.g., `dev-wrcc9`)
+
 #### Usage
 
 ```bash
@@ -175,6 +210,8 @@ A comprehensive debugging script for troubleshooting VKS cluster issues at the V
 ./debug-vks-vms.sh vks-04
 # or with custom namespace
 ./debug-vks-vms.sh vks-04 my-namespace
+# or using environment variable
+K8S_NAMESPACE=my-namespace ./debug-vks-vms.sh vks-04
 ```
 
 #### What it does
@@ -196,6 +233,10 @@ A comprehensive debugging script for troubleshooting VKS cluster issues at the V
 - **Control plane detection** - Identifies which VMs are control plane vs workers
 - **Supervisor resource checking** - Detects CPU/memory constraints on supervisor control plane
 - **Comprehensive diagnostics** - Checks VMs, machines, secrets, connectivity, and platform resources
+
+#### Security Note on SSH Passwords
+
+`debug-vks-vms.sh` retrieves and displays the `vmware-system-user` SSH password for your cluster's VMs. Be mindful of where you run this script and how its output is handled to avoid exposing sensitive credentials in insecure environments (e.g., public logs, shared screens).
 
 #### Example Output
 

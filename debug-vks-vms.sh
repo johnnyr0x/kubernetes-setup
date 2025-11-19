@@ -43,7 +43,8 @@ print_warning() {
 
 # Get cluster name and namespace
 CLUSTER_NAME="${1}"
-NAMESPACE="${2:-dev-wrcc9}"
+# Read namespace from K8S_NAMESPACE env var, fallback to argument, then default
+NAMESPACE="${K8S_NAMESPACE:-${2:-dev-wrcc9}}"
 
 if [ -z "$CLUSTER_NAME" ]; then
     print_error "Usage: $0 <cluster-name> [namespace]"
