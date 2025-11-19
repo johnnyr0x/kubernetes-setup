@@ -458,6 +458,98 @@ configure_settings() {
     fi
 }
 
+# Function to set up kubectl autocomplete and alias
+setup_shell_helpers() {
+    echo ""
+    print_info "======================================================"
+    print_info "Setting up Shell Helpers (autocomplete and 'k' alias)"
+    print_info "======================================================"
+    echo ""
+    
+    local shell_name
+    if [ -n "$BASH_VERSION" ]; then
+        shell_name="bash"
+        shell_config_file="$HOME/.bashrc"
+    elif [ -n "$ZSH_VERSION" ]; then
+        shell_name="zsh"
+        shell_config_file="$HOME/.zshrc"
+    else
+        # Fallback to checking SHELL env var
+        shell_name=$(basename "$SHELL")
+        if [ "$shell_name" = "bash" ]; then
+            shell_config_file="$HOME/.bashrc"
+        elif [ "$shell_name" = "zsh" ]; then
+            shell_config_file="$HOME/.zshrc"
+        else
+            print_warning "Could not determine shell type from common variables. Skipping setup."
+            return
+        fi
+    fi
+    
+    print_info "Detected shell: $shell_name | Config file: $shell_config_file"
+    echo ""
+    
+    local needs_sourcing=false
+    
+    # --- Autocomplete Setup ---
+    print_info "--- 1. Kubectl Autocomplete ---"
+    
+    # Check if autocomplete is active in current session
+    # The completion script defines a function called _kubectl
+    if ! type _kubectl &>/dev/null; then
+        print_info "Autocomplete not active. Enabling for current session..."
+        if ! command -v kubectl >/dev/null; then
+            print_error "kubectl command not found. Cannot set up autocomplete."
+        else
+            # This enables it for the current shell
+            source <(kubectl completion "$shell_name")
+            print_success "Autocomplete enabled for current session."
+        fi
+    else
+        print_success "Autocomplete is already active in this session."
+    fi
+    
+    # Check if setup is permanent
+    if [ -f "$shell_config_file" ] && grep -q "kubectl completion $shell_name" "$shell_config_file"; then
+        print_success "Autocomplete is configured for new shells in $shell_config_file."
+    else
+        print_warning "Autocomplete is NOT configured for new shells."
+        echo "To make it permanent, add the following line to your $shell_config_file:"
+        echo -e "${YELLOW}  source <(kubectl completion $shell_name)${NC}"
+        needs_sourcing=true
+    fi
+    echo ""
+    
+    # --- Alias Setup ---
+    print_info "--- 2. Alias 'k' for 'kubectl' ---"
+    
+    # Check if alias is active in current session
+    # `alias k` will fail if not set, `type k` will check aliases, functions, and executables
+    if ! type k &>/dev/null || ! (alias k | grep -q "='kubectl'"); then
+        print_info "Alias 'k=kubectl' not active. Setting for current session..."
+        alias k=kubectl
+        print_success "Alias 'k=kubectl' set for current session. You can now use 'k'."
+    else
+        print_success "Alias 'k=kubectl' is already active in this session."
+    fi
+    
+    # Check if alias is permanent
+    if [ -f "$shell_config_file" ] && grep -Fq "alias k='kubectl'" "$shell_config_file"; then
+        print_success "Alias 'k=kubectl' is configured for new shells in $shell_config_file."
+    else
+        print_warning "Alias 'k=kubectl' is NOT configured for new shells."
+        echo "To make it permanent, add the following line to your $shell_config_file:"
+        echo -e "${YELLOW}  alias k='kubectl'${NC}"
+        needs_sourcing=true
+    fi
+    echo ""
+    
+    if [ "$needs_sourcing" = true ]; then
+        print_info "After editing $shell_config_file, restart your shell or run:"
+        echo -e "${YELLOW}  source $shell_config_file${NC}"
+    fi
+}
+
 # Main script logic
 main() {
     echo ""
@@ -616,9 +708,9 @@ main() {
     echo ""
     
     print_success "All done! You are now connected to cluster: $cluster_name"
-    print_info "You can now use 'kubectl' or 'k' commands to interact with the cluster"
-    print_info "To set 'k' as an alias for 'kubectl' in your current session, run:"
-    print_info "  alias k=kubectl"
+    
+    # Final step: Set up shell helpers like autocomplete and alias 'k'
+    setup_shell_helpers
 }
 
 # Run main function
