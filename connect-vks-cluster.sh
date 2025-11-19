@@ -474,14 +474,13 @@ setup_shell_helpers() {
         shell_name="zsh"
         shell_config_file="$HOME/.zshrc"
     else
-        # Fallback to checking SHELL env var
         shell_name=$(basename "$SHELL")
         if [ "$shell_name" = "bash" ]; then
             shell_config_file="$HOME/.bashrc"
         elif [ "$shell_name" = "zsh" ]; then
             shell_config_file="$HOME/.zshrc"
         else
-            print_warning "Could not determine shell type from common variables. Skipping setup."
+            print_warning "Could not determine shell type. Skipping helper setup."
             return
         fi
     fi
@@ -522,23 +521,19 @@ setup_shell_helpers() {
     
     # --- Alias Setup ---
     print_info "--- 2. Alias 'k' for 'kubectl' ---"
-    
-    # Check if alias is active in current session
-    # `alias k` will fail if not set, `type k` will check aliases, functions, and executables
-    if ! type k &>/dev/null || ! (alias k | grep -q "='kubectl'"); then
-        print_info "Alias 'k=kubectl' not active. Setting for current session..."
-        alias k=kubectl
-        print_success "Alias 'k=kubectl' set for current session. You can now use 'k'."
-    else
-        print_success "Alias 'k=kubectl' is already active in this session."
-    fi
-    
+
     # Check if alias is permanent
     if [ -f "$shell_config_file" ] && grep -Fq "alias k='kubectl'" "$shell_config_file"; then
         print_success "Alias 'k=kubectl' is configured for new shells in $shell_config_file."
+        if ! type k &>/dev/null || ! (alias k | grep -q "='kubectl'"); then
+            print_warning "It is NOT active in the current session. You may need to run 'source $shell_config_file' or start a new shell."
+        fi
     else
-        print_warning "Alias 'k=kubectl' is NOT configured for new shells."
-        echo "To make it permanent, add the following line to your $shell_config_file:"
+        print_warning "Alias 'k=kubectl' is NOT configured for your shell."
+        echo "To use 'k' for this session, run this command:"
+        echo -e "${YELLOW}  alias k=kubectl${NC}"
+        echo ""
+        echo "To make it permanent, add this line to your $shell_config_file:"
         echo -e "${YELLOW}  alias k='kubectl'${NC}"
         needs_sourcing=true
     fi
